@@ -11,6 +11,11 @@ REPO=$PWD
 DEFCONFIG=${DEFCONFIG:-bcm7429b0_defconfig}
 TAG=${1:-$STBLINUX_TAG}
 B=${VMDIR:-build/vm-$TAG}
+# re-extract when patches/fragment/symvers changed since this tree was made (or it predates stamps)
+WANT=$TAG; [ "$TAG" = "$STBLINUX_TAG" ] && WANT="$TAG $(inputs_hash)"
+if [ -f $B/Makefile ] && [ "$(cat $B/.vm-stamp 2>/dev/null)" != "$WANT" ]; then
+  echo "inputs changed since $B was extracted: re-extracting"; rm -rf $B
+fi
 if [ ! -f $B/Makefile ]; then
   # extract + patch into a temp dir and only then move it into place, so a failed patch can't
   # leave a half-patched tree that later runs would build as if it were complete
@@ -21,6 +26,7 @@ if [ ! -f $B/Makefile ]; then
   else
     git -C stblinux archive $TAG linux | tar -x -C $B.tmp --strip-components=1
   fi
+  echo "$WANT" > $B.tmp/.vm-stamp
   rm -rf $B; mv $B.tmp $B
 fi
 $DOCKER run --rm --user $(id -u):$(id -g) -e HOME=/tmp -v "$REPO":/kbuild "$IMAGE" bash -c "

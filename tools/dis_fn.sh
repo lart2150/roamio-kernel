@@ -8,7 +8,11 @@ B=${VMDIR:-build/vm-$STBLINUX_TAG}
 which=$1; fn=$2
 if [ "$which" = dev ]; then MAP=$K/kallsyms.txt; else MAP=$B/System.map; fi
 # sed: a 64-bit-BFD nm writes sign-extended ffffffff8... addresses
-read a e < <(sed -E 's/^ffffffff//' $MAP | sort | awk -v f="$fn" '$2 ~ /^[tTW]$/ {if (hit) {print a, $1; exit} if ($3 == f) {a=$1; hit=1}}')
+# stop = the next text symbol at a *higher* address (aliases share the start address); the last
+# text symbol has none, so it falls back to start + 0x1000
+read a e < <(sed -E 's/^ffffffff//' $MAP | sort | awk -v f="$fn" '
+  $2 ~ /^[tTW]$/ { if (hit && $1 != a) {print a, $1; done=1; exit} if (!hit && $3 == f) {a=$1; hit=1} }
+  END { if (hit && !done) printf "%s %08x\n", a, strtonum("0x" a) + 0x1000 }')
 [ -n "$a" ] || { echo "$fn not in $MAP"; exit 1; }
 if [ "$which" = dev ]; then
   mips-linux-gnu-objdump -D -b binary -m mips:isa32 -EL --adjust-vma=0x8000ffc0 \

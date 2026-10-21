@@ -51,14 +51,16 @@ def matched(a, b):
 def main():
     dko, oko = sys.argv[1], sys.argv[2]
     dev, our = load(dko), load(oko)
-    parts = []
+    parts, text = [], None
     for s in SECS:
         d, o = dev.get(s, []), our.get(s, [])
         if not d and not o: continue
         sm, m = matched(d, o)
+        if s == '.text':
+            text = (sm, m)            # reused below: the .text match is the slow one (hid ~13.7k insns)
         parts.append('%s %d/%d %.1f%%' % (s, len(d), len(o), 100.0 * m / len(d) if d else 0))
     d, o = dev['.text'], our['.text']
-    sm, m = matched(d, o)
+    sm, m = text
     print('%-14s .text dev %5d ours %5d (%+d)  matched %5.1f%%  identical %s | %s' % (
         dko.rsplit('/', 1)[-1][:-3], len(d), len(o), len(o) - len(d), 100.0 * m / len(d),
         'YES' if d == o else 'no', '  '.join(parts[1:])))

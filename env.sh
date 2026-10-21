@@ -6,3 +6,13 @@ IMAGE=${IMAGE:-tivo-kbuild:gcc-4.8.3}
 STBLINUX_TAG=stblinux-3.3-2.5
 if [ -z "$DOCKER" ]; then docker info >/dev/null 2>&1 && DOCKER=docker || DOCKER="sudo docker"; fi
 KTREE=stblinux/linux
+
+# hash of everything prepare.sh / vmbuild.sh put into a tree: patches, config fragment, symvers.
+# Part of the tree stamps, so editing any of them forces a clean re-prepare / re-extract.
+inputs_hash() {
+  cat patches/*.patch config/roamio_fragment.config symvers/Module.symvers.* | sha256sum | cut -c1-16
+}
+# stamp of the prepared module tree: toolchain image id, defconfig, inputs
+tree_stamp() {
+  echo "$($DOCKER image inspect -f '{{.Id}}' "$IMAGE" 2>/dev/null) ${DEFCONFIG:-bcm7429b0_defconfig} $(inputs_hash)"
+}

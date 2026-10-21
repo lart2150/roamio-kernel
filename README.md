@@ -19,7 +19,8 @@ this tree is checked against the device kernel for that (see below).
 | toolchain image, `prepare.sh`, `kbuild.sh mod/hello` | works under WSL (image ~5 min once, prepare ~6 s) |
 | `hello.ko` vermagic / ELF flags vs stock `cdc-acm.ko` | identical |
 | device export list (`symvers/Module.symvers.device`, 4171 vmlinux exports, CRC 0) | done |
-| `verify.py` (vermagic + imports resolve against the export list) | TODO |
+| stock-module export list (`symvers/Module.symvers.stock`, 1640 exports from 8 modules) | done |
+| `verify.py` static load check | done: all 29 stock TiVo modules, hello and our 14 rebuilds pass; 6 negative cases fail |
 | base release: 2.5 vs 3.3-3.3 (`vmbuild.sh <tag>` + function-size vote) | **2.5** (device agrees with 2.5 on 29 functions, 3.3-3.3 on 8) |
 | config fidelity, symbol level (`tools/symdiff.sh`) | done: device-only 1989 → 264, ours-only 4036 → 6 |
 | whole-kernel struct-offset diff (`tools/offdiff.sh`) | done: no struct clusters left |
@@ -37,11 +38,51 @@ git clone --recurse-submodules --shallow-submodules https://github.com/lart2150/
 cd roamio-kernel
 ./prepare.sh                     # once: builds the image (~5 min), configures, modules_prepare
 ./kbuild.sh mod/hello            # -> mod/hello/hello.ko
+./verify.py mod/hello/hello.ko   # WILL LOAD ON ROAMIO: YES
 ```
 
+`verify.py` needs only python3 (it has its own ELF reader, `tools/kelf.py`). The device kernel has
+no modversions, so instead of CRCs it checks:
+
+- vermagic is exactly `3.3.8-2.5 SMP mod_unload BMIPS 32BIT`. A *missing* vermagic still loads,
+  tainted: the device has `CONFIG_MODULE_FORCE_LOAD`, which is how TiVo's `bcmdhd`, `btusb`, `mpod`
+  etc. (no vermagic) load. A mismatched one is rejected.
+- ELF32 little-endian MIPS, o32, MIPS32 (not R2), not PIC/abicalls
+- no FPU instructions. The float ABI tag is only a note: TiVo's proprietary modules are tagged
+  hard-float and contain no FPU code.
+- `struct module` (`.gnu.linkonce.this_module`) is 0x13c bytes, as in every stock module
+- only relocation types the MIPS loader handles (`NONE`/`32`/`26`/`HI16`/`LO16`) in allocated
+  sections. `arch/mips/kernel/module.c` indexes its handler table with the raw type and no bounds
+  check, so anything else (`PC16`, `GPREL16`, `GOT16`, …) oopses at insmod instead of failing
+- no `R_MIPS_26` (`jal`) to an imported symbol: modules load in vmalloc space, far from the kernel,
+  so those fail to relocate (Kbuild's `-mlong-calls` prevents them)
+- no common symbols (the loader rejects them: "please compile with -fno-common"), and no symbol in
+  another reserved section index. On MIPS, `-fcommon` gives `SHN_MIPS_SCOMMON` (0xff03) after
+  `ld -r`, and the 3.3 loader would use that as an index into the section table.
+- every import is exported by vmlinux, a stock module, or a sibling module in the same directory
+  (its `Module.symvers`); unresolved *weak* imports are allowed, as in the loader. For stock-module
+  imports it prints which module to load first, e.g.
+  `needs input-core loaded first for: input_allocate_device …`
+- GPL-only imports only from a GPL-compatible license
+- no export that vmlinux already exports (the loader refuses "exports duplicate symbol"). A module
+  exporting a stock module's symbols (e.g. our own `input-core.ko`) gets a note: it can't be loaded
+  while that stock module is.
+
+On the device, INPUT, HID, FAT and loop are modules, and `bcm7429.ko` exports 1535 Nexus/BXVD/TiVo
+symbols (plain `EXPORT_SYMBOL`). `symvers/Module.symvers.stock` lists the stock modules' exports
+(`tools/stock_symvers.py <modules dir>`), and `prepare.sh` gives modpost both tables, so it
+resolves imports the way the box will.
+
 `prepare.sh` builds in place inside `stblinux/linux`, so the submodule is dirty afterwards
-(ignored via `.gitmodules`). The tree is stamped with the toolchain image id + defconfig and
-cleaned when either changes.
+(ignored via `.gitmodules`). The tree is stamped with the toolchain image id, the defconfig and a
+hash of `patches/`, the config fragment and `symvers/`. When any of them changes, `prepare.sh`
+resets `stblinux/linux` to the pinned release (`git checkout` + `clean`) and starts over, and
+`kbuild.sh` refuses a stale tree. Don't keep hand edits in `stblinux/linux`; put them in
+`patches/`. `vmbuild.sh` re-extracts its tree for the same reasons.
+
+The analysis tools (`textcmp.py`, `offscan.py`, `offdiff.sh`, `dis_fn.sh`, `ptype.sh`) also need host
+MIPS binutils (`apt install binutils-mips-linux-gnu`) and, for `ptype.sh`, `gdb-multiarch`.
+`verify.py` needs only python3.
 
 ## Layout
 
@@ -56,6 +97,9 @@ cleaned when either changes.
 | `patches/tivo-clear-bit-sync.patch` | `sync` after the `sc` in `clear_bit()`, as on the device |
 | `patches/tivo-layout.patch` | pads `scatterlist` (+4 at 0), `request` (+4 after `deadline`), `request_queue` (+96 after `nr_batching`) to the TiVo offsets |
 | `symvers/Module.symvers.device` | device vmlinux exports (names; CRC 0) from the kernel image's `__ksymtab` |
+| `symvers/Module.symvers.stock` | exports of the device's stock modules (`tools/stock_symvers.py`) |
+| `verify.py <ko> …` | static load check against the device (exit 0 = all pass) |
+| `tools/kelf.py` | minimal ELF32 LE reader used by `verify.py` / `stock_symvers.py` |
 | `prepare.sh` | one-time: build image, apply `patches/`, configure, `modules_prepare` |
 | `kbuild.sh <dir>` | build a module dir against the prepared tree |
 | `vmbuild.sh [tag]` | full `vmlinux` of our config in `build/vm-<tag>/` (or `$VMDIR`), for diffing against the device |
