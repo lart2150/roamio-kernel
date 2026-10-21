@@ -1,0 +1,4 @@
+[submodule "stblinux"]
+	path = stblinux
+	url = https://github.com/lart2150/stblinux-3.3
+	ignore = dirty

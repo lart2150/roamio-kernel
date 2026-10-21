@@ -1,0 +1,15 @@
+TiVo's kernel brackets every ll/sc sequence with sync (smp_mb__before_llsc / smp_llsc_mb), which
+only happens with CONFIG_WEAK_REORDERING_BEYOND_LLSC. It is a hidden bool, and no Broadcom
+stblinux-3.3 release selects it for BMIPS5000, so TiVo patched Kconfig. Seen in the stock
+cdc-acm.ko / input-core.ko test_and_clear_bit() sequences.
+
+--- a/arch/mips/Kconfig
++++ b/arch/mips/Kconfig
+@@ -1479,6 +1479,7 @@ config CPU_BMIPS5000
+ 	select CPU_BMIPS
+ 	select CPU_SUPPORTS_HIGHMEM
+ 	select MIPS_CPU_SCACHE
++	select WEAK_REORDERING_BEYOND_LLSC
+ 	select SYS_SUPPORTS_SMP
+ 	select SYS_SUPPORTS_HOTPLUG_CPU
+ 	select MIPS_PERF_SHARED_TC_COUNTERS

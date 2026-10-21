@@ -1,0 +1,42 @@
+Pad struct request / struct request_queue to the TiVo device offsets (from the whole-kernel aligned
+offset diff, tools/offdiff.sh). The TiVo fields themselves are unknown; these are padding only.
+
+- request: +4 after deadline (timeout_list 188 -> 192; blk_rq_init, blk_add_timer, scsi/sg users)
+- request_queue: +96 after the nr_requests group (dma_drain_size 800 -> 896 and everything after:
+  tags, timeout, limits 912 -> 1008, flush_rq). TiVo splits the request limit / congestion thresholds
+  per direction there (device blk_queue_congestion_threshold reads 784/788, writes 792..804;
+  queue_requests_{read,write}_* sysfs), so nr_congestion_on/off/nr_batching keep *our* offsets and
+  must not be used from modules.
+- scatterlist: +4 at offset 0 (page_link 0 -> 4, 20-byte entries). This is the DEBUG_SG layout, but
+  the device never writes or checks SG_MAGIC (sg_init_table/sg_next have no magic store/trap, 106
+  fewer tne traps than a DEBUG_SG build), so it is a pad here with DEBUG_SG off.
+
+--- a/include/asm-generic/scatterlist.h
++++ b/include/asm-generic/scatterlist.h
+@@ -6,6 +6,8 @@
+ struct scatterlist {
+ #ifdef CONFIG_DEBUG_SG
+ 	unsigned long	sg_magic;
++#else
++	unsigned long	tivo_pad0;	/* TiVo: unknown 4-byte field (sg_magic slot, never set) */
+ #endif
+ 	unsigned long	page_link;
+ 	unsigned int	offset;
+--- a/include/linux/blkdev.h
++++ b/include/linux/blkdev.h
+@@ -164,6 +164,7 @@ struct request {
+ 	void *sense;
+
+ 	unsigned long deadline;
++	unsigned int tivo_pad0;		/* TiVo: unknown field(s), 4 bytes */
+ 	struct list_head timeout_list;
+ 	unsigned int timeout;
+ 	int retries;
+@@ -345,6 +346,7 @@ struct request_queue {
+ 	unsigned int		nr_congestion_on;
+ 	unsigned int		nr_congestion_off;
+ 	unsigned int		nr_batching;
++	unsigned char		tivo_pad0[96];	/* TiVo: per-direction limits/credits, 96 bytes */
+
+ 	unsigned int		dma_drain_size;
+ 	void			*dma_drain_buffer;
